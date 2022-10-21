@@ -1,0 +1,9 @@
+venv/
+.idea/
+*.pyc
+*.mo
+*.sqlite3
+*.bak
+*.log
+*/migrations/[0-9]*_initial.py
+*/migrations/[0-9]*_auto_[0-9]*_[0-9]*.py
