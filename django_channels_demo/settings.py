@@ -134,7 +134,8 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("127.0.0.1", 6379)],
+            # https://github.com/django/channels/issues/164
+            "hosts": ["redis://:mypassword@127.0.0.1:6379/0"],
         },
     },
 }
