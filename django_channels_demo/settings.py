@@ -130,4 +130,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Config for channels --- begin
 ASGI_APPLICATION = 'django_channels_demo.asgi.application'
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [("127.0.0.1", 6379)],
+        },
+    },
+}
 # Config for channels --- end
