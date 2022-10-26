@@ -28,7 +28,7 @@ python manage.py runserver
 
 浏览器访问 `ip:port/chat`，输入任意聊天室的名字，进入聊天室开始聊天（WebSocket 测试）。
 
-## 主要文件
+## 目录结构
 
 下面对这个小案例涉及到的主要文件/文件夹进行标注，省略跟 Channels 无关的文件。
 
