@@ -9,6 +9,40 @@
 * Django 4.1.2（兼容 2.x 和 3.x）
 * Channels 3.0.5
 
+## 运行方式
+
+下载、安装、运行代码：
+
+```bash
+git clone https://github.com/wenyuan/django_channels_demo.git
+pip install -r requirements.txt
+cd django_channels_demo/
+python manage.py runserver
+```
+
+浏览器访问 `ip:port/chat`，输入任意聊天室的名字，进入聊天室开始聊天（WebSocket 测试）。
+
+## 主要文件
+
+下面对这个小案例涉及到的主要文件/文件夹进行标注，省略跟 Channels 无关的文件。
+
+```
+django_channels_demo/
+├── chat
+│   │── templates/      # 模板文件（即 html）
+│   │── urls.py         # 映射到视图的路由，处理 http 请求
+│   │── views.py        # 视图文件，接收并处理 http 链接
+│   │── routing.py      # 到消费者的路由，专门处理 websocket，类似普通的处理 http 请求的 urls.py
+│   │── consumers.py    # 消费者，接收并处理 websocket 链接
+│   └── ...（其它省略）
+├── django_channels_demo
+│   │── settings.py/    # Django 配置文件
+│   │── urls.py         # 项目根路由
+│   │── asgi.py         # 配置 ASGI 协议，让它替代并兼容原本的 WSGI 协议
+│   └── ...（其它省略）
+└── ...
+```
+
 ## 知识点
 
 ### WebSocket
@@ -75,39 +109,114 @@ Channel Layer 是一个中间通道层，它允许多个使用者实例之间以
 
 然后的话，官方推荐使用 Redis 作为 Channel Layer，与之配对的库是 `channels_redis`。
 
-## 运行方式
+## 关键代码解释
 
-下载、安装、运行代码：
+### settings.py
 
-```bash
-git clone https://github.com/wenyuan/django_channels_demo.git
-pip install -r requirements.txt
-cd django_channels_demo/
-python manage.py runserver
+```python
+# 指定 ASGI 的路由地址
+ASGI_APPLICATION = 'django_channels_demo.asgi.application'
 ```
 
-浏览器访问 `ip:port/chat`，输入任意聊天室的名字，进入聊天室开始聊天（WebSocket 测试）。
+Channels 需要运行于 ASGI 协议上，它是区别于 Django 使用的 WSGI 协议的一种异步服务网关接口协议，`ASGI_APPLICATION` 指定主路由的位置（`application` 的位置）。官方文档是把 `application` 写在 `settings.py` 同级的 `asgi.py` 里面的，看到很多人写的文章会在 `settings.py` 同级新建一个 `routing.py`，然后将 `application` 写在里面。
 
-## 主要文件
+### asgi.py 或 routing.py
 
-下面对这个小案例涉及到的主要文件/文件夹进行标注，省略跟 Channels 无关的文件。
+里面的内容就类似于 Django 中的 url.py，指明 WebSocket 协议的路由。
 
-```
-django_channels_demo/
-├── chat
-│   │── templates/      # 模板文件（即 html）
-│   │── urls.py         # 映射到视图的路由，处理 http 请求
-│   │── views.py        # 视图文件，接收并处理 http 链接
-│   │── routing.py      # 到消费者的路由，专门处理 websocket，类似普通的处理 http 请求的 urls.py
-│   │── consumers.py    # 消费者，接收并处理 websocket 链接
-│   └── ...（其它省略）
-├── django_channels_demo
-│   │── settings.py/    # Django 配置文件
-│   │── urls.py         # 项目根路由
-│   │── asgi.py         # 配置 ASGI 协议，让它替代并兼容原本的 WSGI 协议
-│   └── ...（其它省略）
-└── ...
+```python
+from channels.auth import AuthMiddlewareStack
+from channels.routing import ProtocolTypeRouter, URLRouter
+import chat.routing
+
+application = ProtocolTypeRouter({
+    'websocket': AuthMiddlewareStack(
+        URLRouter(
+            chat.routing.websocket_urlpatterns
+        )
+    ),
+})
 ```
 
-## 关键代码
+* ProtocolTypeRouter：ASIG 支持多种不同的协议，在这里可以指定特定协议的路由信息，如果只使用了 WebSocket 协议，这里只配置 `websocket` 即可。
+* AuthMiddlewareStack：Django 的 Channels 封装了 Django 的 auth 模块，使用这个配置我们就可以在 consumer 中通过类似下面的代码获取到用户的信息。
+  ```python
+  def connect(self):
+      # self.scope 类似于 Django 中的 request，包含了请求的 type、path、header、cookie、session、user 等等有用的信息
+      self.user = self.scope["user"]
+  ```
+* URLRouter：指定路由文件的路径，也可以直接将路由信息写在这里，代码中配置了路由文件的路径，会去 `chat` 下的 routeing.py 文件中查找 `websocket_urlpatterns`。
 
+### chat/routing.py
+
+routing.py 路由文件跟 Django 的 url.py 功能类似，语法也一样，下面代码的意思就是访问 `ws/chat/` 都交给 ChatConsumer 处理。
+
+```python
+from django.urls import re_path
+from chat.consumers import ChatConsumer
+
+websocket_urlpatterns = [
+    re_path(r"ws/chat/(?P<room_name>\w+)/$", ChatConsumer.as_asgi()),
+]
+```
+
+调用 `as_asgi()` 类方法是为了获得一个 ASGI 应用程序，该应用程序将为每个用户连接提供 ChatConsumer 的实例。这类似于 Django 的 `as_view()`，它起的作用跟每个对 Django 视图的请求一样。
+
+### consumers.py
+
+consumer 类似 Django 中的 view，一个简单的 consumer 类如下：
+
+```python
+from channels.generic.websocket import WebsocketConsumer
+import json
+
+
+class ChatConsumer(WebsocketConsumer):
+    def connect(self):
+        self.accept()
+
+    def disconnect(self, close_code):
+        pass
+
+    def receive(self, text_data):
+        text_data_json = json.loads(text_data)
+        message = text_data_json["message"]
+        # send message to websocket
+        self.send(text_data=json.dumps({
+            "message": message
+        }))
+```
+
+`connect` 方法在连接建立时触发，`disconnect` 在连接关闭时触发，`receive` 方法会在收到消息后触发。
+
+### room.html
+
+这里主要是对页面添加 WebSocket 支持（属于前端开发的知识）。
+
+```javascript
+const chatSocket = new WebSocket(
+  'ws://'
+  + window.location.host
+  + '/ws/chat/'
+  + roomName
+  + '/'
+);
+
+chatSocket.onmessage = function (e) {
+  const data = JSON.parse(e.data);
+  document.querySelector('#chat-log').value += (data.message + '\n');
+};
+
+chatSocket.onclose = function (e) {
+  console.error('Chat socket closed unexpectedly');
+};
+```
+
+WebSocket 对象一个支持四个消息：`onopen`，`onmessage`，`onclose` 和 `onerror`，我们这里用了两个 `onmessage` 和 `onclose`。
+
+* `onopen`：当浏览器和 WebSocket 服务端连接成功后会触发 `onopen` 消息。
+* `onerror`：如果连接失败，或者发送、接收数据失败，或者数据处理出错都会触发 `onerror` 消息。
+* `onmessage`：当浏览器接收到 WebSocket 服务器发送过来的数据时，就会触发 `onmessage` 消息，参数 `e` 包含了服务端发送过来的数据。
+* `onclose`：当浏览器接收到 WebSocket 服务器发送过来的关闭连接请求时，会触发 `onclose` 消息。
+
+所以，在浏览器中输入消息就会通过 websocket --> rouging.py --> consumer.py 处理后返回给前端。
